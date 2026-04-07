@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+<script>
+window['ai_edge_gallery_get_result'] = async (rawData) => {
+  try {
+    const { query, type } = JSON.parse(rawData);
+    if (!query) return JSON.stringify({ error: "No query provided." });
+
+    function escHtml(str) {
+      return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
+        .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    }
+
+    function getWeatherEmoji(desc) {
+      const d = (desc || "").toLowerCase();
+      if (d.includes("sunny") || d.includes("clear")) return "☀️";
+      if (d.includes("partly")) return "⛅";
+      if (d.includes("cloud") || d.includes("overcast")) return "☁️";
+      if (d.includes("rain") || d.includes("drizzle")) return "🌧️";
+      if (d.includes("thunder") || d.includes("storm")) return "⛈️";
+      if (d.includes("snow") || d.includes("blizzard")) return "❄️";
+      if (d.includes("fog") || d.includes("mist")) return "🌫️";
+      if (d.includes("wind")) return "💨";
+      return "🌡️";
+    }
+
+    // ── WEATHER ──────────────────────────────────────────────────────────────
+    if (type === "weather") {
+      const url = `https://wttr.in/${encodeURIComponent(query)}?format=j1`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Weather fetch failed: ${res.status}`);
+      const data = await res.json();
+
+      const current = data.current_condition[0];
+      const area    = data.nearest_area[0];
+      const city    = area.areaName[0].value;
+      const country = area.country[0].value;
+      const tempC   = current.temp_C;
+      const tempF   = current.temp_F;
+      const feels   = current.FeelsLikeC;
+      const desc    = current.weatherDesc[0].value;
+      const humidity= current.humidity;
+      const wind    = current.windspeedKmph;
+      const vis     = current.visibility;
+      const emoji   = getWeatherEmoji(desc);
+
+      const forecast = data.weather.slice(0, 3).map(day => {
+        const d = day.hourly[4]?.weatherDesc[0]?.value || "";
+        return { date: day.date, min: day.mintempC, max: day.maxtempC, desc: d };
+      });
+
+      const resultText =
+        `Weather in ${city}, ${country}: ${tempC}°C (${tempF}°F), ${desc}. ` +
+        `Feels like ${feels}°C. Humidity ${humidity}%, Wind ${wind} km/h.`;
+
+      const forecastRows = forecast.map(f =>
+        `<div class="fc-row">
+          <span class="fc-date">${escHtml(f.date)}</span>
+          <span class="fc-desc">${escHtml(f.desc)}</span>
+          <span class="fc-temp">${f.min}°–${f.max}°C</span>
+        </div>`
+      ).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:linear-gradient(135deg,#1a1f35,#0d1117);
+  color:#e8eaf0;padding:16px;font-size:14px;min-height:100vh}
+.card{background:rgba(255,255,255,.06);border-radius:18px;padding:20px;
+  border:1px solid rgba(255,255,255,.1)}
+.loc{font-size:12px;color:#888;margin-bottom:2px}
+.city{font-size:20px;font-weight:700;color:#fff;margin-bottom:14px}
+.main{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.emoji{font-size:56px;line-height:1}
+.temp{font-size:52px;font-weight:200;color:#fff}
+.unit{font-size:18px;color:#888;vertical-align:super}
+.desc{font-size:15px;color:#aab;margin-top:4px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stat{background:rgba(255,255,255,.05);border-radius:12px;padding:10px 12px}
+.sl{font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.06em}
+.sv{font-size:17px;font-weight:600;color:#cde;margin-top:3px}
+.ftitle{font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.fc-row{display:flex;justify-content:space-between;align-items:center;
+  padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:13px;color:#bcd}
+.fc-row:last-child{border-bottom:none}
+.fc-date{color:#888;font-size:12px;min-width:90px}
+.fc-desc{flex:1;text-align:center;color:#cde}
+.fc-temp{color:#7cf;font-weight:600;min-width:80px;text-align:right}
+</style></head><body>
+<div class="card">
+  <div class="loc">📍 ${escHtml(city)}, ${escHtml(country)}</div>
+  <div class="city">Current Weather</div>
+  <div class="main">
+    <div class="emoji">${emoji}</div>
+    <div>
+      <div><span class="temp">${tempC}</span><span class="unit">°C</span></div>
+      <div class="desc">${escHtml(desc)}</div>
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="sl">Feels Like</div><div class="sv">${feels}°C</div></div>
+    <div class="stat"><div class="sl">Humidity</div><div class="sv">${humidity}%</div></div>
+    <div class="stat"><div class="sl">Wind</div><div class="sv">${wind} km/h</div></div>
+    <div class="stat"><div class="sl">Visibility</div><div class="sv">${vis} km</div></div>
+  </div>
+  <div class="ftitle">3-Day Forecast</div>
+  ${forecastRows}
+</div>
+</body></html>`;
+
+      const encoded = btoa(unescape(encodeURIComponent(html)));
+      return JSON.stringify({
+        result: resultText,
+        webview: { url: `data:text/html;base64,${encoded}`, aspectRatio: 1.5 }
+      });
+    }
+
+    // ── WIKI SEARCH ──────────────────────────────────────────────────────────
+    const summaryUrl =
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+    const res = await fetch(summaryUrl, { headers: { Accept: "application/json" } });
+
+    let title, summary, thumbnail, pageUrl;
+
+    if (res.status === 404) {
+      // Fallback to search list
+      const searchUrl =
+        `https://en.wikipedia.org/w/api.php?action=query&list=search` +
+        `&srsearch=${encodeURIComponent(query)}&format=json&origin=*&srlimit=6`;
+      const sRes  = await fetch(searchUrl);
+      const sData = await sRes.json();
+      const hits  = sData.query?.search || [];
+
+      if (!hits.length) return JSON.stringify({ result: `No results found for "${query}".` });
+
+      const items = hits.map(h =>
+        `<div class="item">
+          <div class="ititle">${escHtml(h.title)}</div>
+          <div class="isnip">${escHtml((h.snippet || "").replace(/<[^>]+>/g,""))}</div>
+        </div>`
+      ).join("");
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#0f1117;color:#e8eaf0;padding:16px;font-size:14px}
+.hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.icon{width:34px;height:34px;background:linear-gradient(135deg,#4f8ef7,#a259ff);
+  border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em}
+.q{font-weight:700;font-size:16px;color:#fff;margin-top:1px}
+.item{padding:10px 0;border-bottom:1px solid #1e2130}
+.item:last-child{border-bottom:none}
+.ititle{font-weight:600;color:#7ab4f7;margin-bottom:4px}
+.isnip{color:#aab;font-size:12px;line-height:1.4}
+</style></head><body>
+<div class="hdr">
+  <div class="icon">🔍</div>
+  <div><div class="label">Search Results</div><div class="q">${escHtml(query)}</div></div>
+</div>
+${items}
+</body></html>`;
+
+      const encoded = btoa(unescape(encodeURIComponent(html)));
+      return JSON.stringify({
+        result: `Search results for "${query}": ${hits.map(h => h.title).join(", ")}`,
+        webview: { url: `data:text/html;base64,${encoded}`, aspectRatio: 1.4 }
+      });
+    }
+
+    if (!res.ok) throw new Error(`Wikipedia fetch failed: ${res.status}`);
+    const data = await res.json();
+
+    title     = data.title || query;
+    summary   = data.extract || "No summary available.";
+    thumbnail = data.thumbnail?.source || "";
+    pageUrl   = data.content_urls?.desktop?.page || "";
+
+    const resultText = `${title}: ${summary.slice(0, 400)}${summary.length > 400 ? "..." : ""}`;
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#0f1117;color:#e8eaf0;padding:16px;font-size:14px}
+.hdr{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.icon{width:34px;height:34px;background:linear-gradient(135deg,#4f8ef7,#a259ff);
+  border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px}
+.label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.05em}
+.title{font-weight:700;font-size:17px;color:#fff;margin-top:2px}
+.thumb{width:100%;max-height:170px;object-fit:cover;border-radius:12px;margin-bottom:12px}
+.body{background:#161922;border-left:3px solid #4f8ef7;border-radius:8px;
+  padding:12px 14px;line-height:1.65;color:#c8ccd8;margin-bottom:10px;font-size:13px}
+.src{display:inline-block;font-size:12px;color:#4f8ef7;text-decoration:none;margin-top:6px}
+</style></head><body>
+<div class="hdr">
+  <div class="icon">📖</div>
+  <div><div class="label">Wikipedia</div><div class="title">${escHtml(title)}</div></div>
+</div>
+${thumbnail ? `<img class="thumb" src="${escHtml(thumbnail)}" alt="${escHtml(title)}">` : ""}
+<div class="body">
+  ${escHtml(summary.slice(0, 600))}${summary.length > 600 ? "…" : ""}
+  ${pageUrl ? `<br><br><a class="src" href="${escHtml(pageUrl)}" target="_blank">📖 Read full article →</a>` : ""}
+</div>
+</body></html>`;
+
+    const encoded = btoa(unescape(encodeURIComponent(html)));
+    return JSON.stringify({
+      result: resultText,
+      webview: { url: `data:text/html;base64,${encoded}`, aspectRatio: 1.4 }
+    });
+
+  } catch (e) {
+    return JSON.stringify({ error: `Failed: ${e.message}` });
+  }
+};
+</script>
+</body>
+</html>
